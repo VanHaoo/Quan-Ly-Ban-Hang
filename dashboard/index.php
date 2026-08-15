@@ -1,53 +1,66 @@
 <?php
+require_once __DIR__ . '/../config/config.php';   // FIX #2: load config TRƯỚC header
 require_once __DIR__ . '/../includes/auth.php';
 requirePermission('dashboard_view');
 $page_title = 'Dashboard';
 
-// Lấy thống kê
+const DASHBOARD_LIST_LIMIT = 10;
+const DASHBOARD_TOPSP_LIMIT = 5;
+const DASHBOARD_CHART_DAYS = 7;
+
 $today = date('Y-m-d');
 
 // Doanh thu hôm nay
-$stmt = $pdo->prepare("SELECT COALESCE(SUM(tong_thanh_toan), 0) as doanh_thu, COUNT(*) as so_hd FROM HOADON WHERE DATE(ngay_tao) = :today AND trang_thai = 'HOANTAT'");
+$stmt = $pdo->prepare("SELECT COALESCE(SUM(tong_thanh_toan), 0) as doanh_thu, COUNT(*) as so_hd
+                        FROM HOADON WHERE DATE(ngay_tao) = :today AND trang_thai = 'HOANTAT'");
 $stmt->execute(['today' => $today]);
 $stats_today = $stmt->fetch();
 
 // Tổng sản phẩm
-$stmt = $pdo->query("SELECT COUNT(*) as total FROM SANPHAM WHERE trang_thai = 1");
-$total_sp = $stmt->fetch()['total'];
+$total_sp = $pdo->query("SELECT COUNT(*) as total FROM SANPHAM WHERE trang_thai = 1")->fetch()['total'];
 
 // Tổng khách hàng
-$stmt = $pdo->query("SELECT COUNT(*) as total FROM KHACHHANG WHERE trang_thai = 1");
-$total_kh = $stmt->fetch()['total'];
+$total_kh = $pdo->query("SELECT COUNT(*) as total FROM KHACHHANG WHERE trang_thai = 1")->fetch()['total'];
 
-// Sản phẩm sắp hết hàng
-$stmt = $pdo->query("SELECT COUNT(*) as total FROM V_TONKHO_CANHBAO WHERE trang_thai_ton COLLATE utf8mb4_unicode_ci = 'SAP_HET' COLLATE utf8mb4_unicode_ci");
-$sap_het = $stmt->fetch()['total'];
+// Sản phẩm sắp hết hàng - đếm + danh sách gom chung 1 chỗ (FIX #5)
+$low_stock_list = $pdo->query("
+    SELECT * FROM V_TONKHO_CANHBAO
+    WHERE trang_thai_ton = 'SAP_HET' COLLATE utf8mb4_unicode_ci
+    LIMIT " . DASHBOARD_LIST_LIMIT
+)->fetchAll();
+$sap_het = count($low_stock_list) === DASHBOARD_LIST_LIMIT
+    ? $pdo->query("SELECT COUNT(*) as total FROM V_TONKHO_CANHBAO WHERE trang_thai_ton = 'SAP_HET'")->fetch()['total']
+    : count($low_stock_list);
 
 // Hóa đơn gần đây
-$stmt = $pdo->query("
+$recent_invoices = $pdo->query("
     SELECT hd.ma_hd, nv.ho_ten as nhan_vien, hd.tong_thanh_toan, hd.ngay_tao
     FROM HOADON hd
     JOIN NHANVIEN nv ON hd.ma_nhan_vien = nv.ma_nhan_vien
     WHERE hd.trang_thai = 'HOANTAT'
     ORDER BY hd.ngay_tao DESC
-    LIMIT 10
-");
-$recent_invoices = $stmt->fetchAll();
+    LIMIT " . DASHBOARD_LIST_LIMIT
+)->fetchAll();
 
-// Doanh thu 7 ngày gần nhất
-$stmt = $pdo->query("
-    SELECT ngay, doanh_thu FROM V_DOANHTHU_NGAY 
-    WHERE ngay >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-    ORDER BY ngay ASC
-");
-$chart_data = $stmt->fetchAll();
+// Doanh thu N ngày gần nhất - FIX #1: tự sinh đủ ngày, ngày không có DT thì = 0
+$raw_revenue = $pdo->query("
+    SELECT ngay, doanh_thu FROM V_DOANHTHU_NGAY
+    WHERE ngay >= DATE_SUB(CURDATE(), INTERVAL " . (DASHBOARD_CHART_DAYS - 1) . " DAY)
+")->fetchAll(PDO::FETCH_KEY_PAIR); // ['2026-08-10' => 150000, ...]
+
+$chart_data = [];
+for ($i = DASHBOARD_CHART_DAYS - 1; $i >= 0; $i--) {
+    $d = date('Y-m-d', strtotime("-{$i} day"));
+    $chart_data[] = [
+        'ngay'      => $d,
+        'doanh_thu' => (float)($raw_revenue[$d] ?? 0),
+    ];
+}
 
 // Sản phẩm bán chạy
-$stmt = $pdo->query("SELECT * FROM V_SANPHAM_BANCHAY LIMIT 5");
-$banchay = $stmt->fetchAll();
+$banchay = $pdo->query("SELECT * FROM V_SANPHAM_BANCHAY LIMIT " . DASHBOARD_TOPSP_LIMIT)->fetchAll();
 
 require_once __DIR__ . '/../includes/header.php';
-require_once __DIR__ . '/../config/config.php';
 ?>
 
 <div class="dashboard">
@@ -64,28 +77,28 @@ require_once __DIR__ . '/../config/config.php';
             <div class="stat-icon"><i class="fas fa-receipt"></i></div>
             <div class="stat-info">
                 <span class="stat-label">Hóa đơn hôm nay</span>
-                <span class="stat-value"><?= $stats_today['so_hd'] ?> đơn</span>
+                <span class="stat-value"><?= (int)$stats_today['so_hd'] ?> đơn</span>
             </div>
         </div>
         <div class="stat-card stat-product">
             <div class="stat-icon"><i class="fas fa-box"></i></div>
             <div class="stat-info">
                 <span class="stat-label">Sản phẩm</span>
-                <span class="stat-value"><?= $total_sp ?> SP</span>
+                <span class="stat-value"><?= (int)$total_sp ?> SP</span>
             </div>
         </div>
         <div class="stat-card stat-customer">
             <div class="stat-icon"><i class="fas fa-users"></i></div>
             <div class="stat-info">
                 <span class="stat-label">Khách hàng</span>
-                <span class="stat-value"><?= $total_kh ?> KH</span>
+                <span class="stat-value"><?= (int)$total_kh ?> KH</span>
             </div>
         </div>
-        <div class="stat-card stat-warning">
+        <div class="stat-card stat-warning<?= $sap_het > 0 ? ' has-alert' : '' ?>">
             <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
             <div class="stat-info">
                 <span class="stat-label">Sắp hết hàng</span>
-                <span class="stat-value"><?= $sap_het ?> SKU</span>
+                <span class="stat-value"><?= (int)$sap_het ?> SKU</span>
             </div>
         </div>
     </div>
@@ -93,7 +106,7 @@ require_once __DIR__ . '/../config/config.php';
     <div class="dashboard-row">
         <!-- Chart -->
         <div class="dashboard-card chart-card">
-            <h3><i class="fas fa-chart-line"></i> Doanh thu 7 ngày gần nhất</h3>
+            <h3><i class="fas fa-chart-line"></i> Doanh thu <?= DASHBOARD_CHART_DAYS ?> ngày gần nhất</h3>
             <canvas id="revenueChart" height="200"></canvas>
         </div>
 
@@ -105,14 +118,23 @@ require_once __DIR__ . '/../config/config.php';
                     <tr><th>Mã HD</th><th>Nhân viên</th><th>Tổng tiền</th><th>Thời gian</th></tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($recent_invoices as $hd): ?>
+                    <?php if (empty($recent_invoices)): ?>
+                    <tr class="empty-row">
+                        <td colspan="4">
+                            <div class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <span>Chưa có hóa đơn nào</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php else: foreach ($recent_invoices as $hd): ?>
                     <tr>
                         <td><strong><?= htmlspecialchars($hd['ma_hd']) ?></strong></td>
                         <td><?= htmlspecialchars($hd['nhan_vien']) ?></td>
                         <td class="text-right"><?= formatMoney($hd['tong_thanh_toan']) ?></td>
                         <td><?= formatDate($hd['ngay_tao']) ?></td>
                     </tr>
-                    <?php endforeach; ?>
+                    <?php endforeach; endif; ?>
                 </tbody>
             </table>
         </div>
@@ -127,14 +149,23 @@ require_once __DIR__ . '/../config/config.php';
                     <tr><th>SKU</th><th>Tên sản phẩm</th><th>Đã bán</th><th>Doanh thu</th></tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($banchay as $sp): ?>
+                    <?php if (empty($banchay)): ?>
+                    <tr class="empty-row">
+                        <td colspan="4">
+                            <div class="empty-state">
+                                <i class="fas fa-chart-bar"></i>
+                                <span>Chưa có dữ liệu bán hàng</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php else: foreach ($banchay as $sp): ?>
                     <tr>
                         <td><?= htmlspecialchars($sp['sku']) ?></td>
                         <td><?= htmlspecialchars($sp['ten_san_pham'] . ' - ' . $sp['ten_bien_the']) ?></td>
-                        <td class="text-center"><?= $sp['tong_ban'] ?></td>
+                        <td class="text-center"><?= (int)$sp['tong_ban'] ?></td>
                         <td class="text-right"><?= formatMoney($sp['tong_doanh_thu']) ?></td>
                     </tr>
-                    <?php endforeach; ?>
+                    <?php endforeach; endif; ?>
                 </tbody>
             </table>
         </div>
@@ -147,17 +178,23 @@ require_once __DIR__ . '/../config/config.php';
                     <tr><th>SKU</th><th>Tên</th><th>Tồn kho</th><th>Tối thiểu</th></tr>
                 </thead>
                 <tbody>
-                    <?php
-                    $stmt = $pdo->query("SELECT * FROM V_TONKHO_CANHBAO WHERE trang_thai_ton = 'SAP_HET' LIMIT 10");
-                    foreach ($stmt->fetchAll() as $tk):
-                    ?>
+                    <?php if (empty($low_stock_list)): ?>
+                    <tr class="empty-row">
+                        <td colspan="4">
+                            <div class="empty-state">
+                                <i class="fas fa-check-circle"></i>
+                                <span>Không có sản phẩm nào sắp hết hàng</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php else: foreach ($low_stock_list as $tk): ?>
                     <tr>
                         <td><?= htmlspecialchars($tk['sku']) ?></td>
                         <td><?= htmlspecialchars($tk['ten_san_pham']) ?></td>
-                        <td class="text-center text-danger"><strong><?= $tk['so_luong'] ?></strong></td>
-                        <td class="text-center"><?= $tk['ton_toi_thieu'] ?></td>
+                        <td class="text-center text-danger"><strong><?= (int)$tk['so_luong'] ?></strong></td>
+                        <td class="text-center"><?= (int)$tk['ton_toi_thieu'] ?></td>
                     </tr>
-                    <?php endforeach; ?>
+                    <?php endforeach; endif; ?>
                 </tbody>
             </table>
         </div>
@@ -169,6 +206,7 @@ require_once __DIR__ . '/../config/config.php';
 const ctx = document.getElementById('revenueChart').getContext('2d');
 const labels = <?= json_encode(array_map(fn($d) => date('d/m', strtotime($d['ngay'])), $chart_data)) ?>;
 const data = <?= json_encode(array_map(fn($d) => (float)$d['doanh_thu'], $chart_data)) ?>;
+const hasData = data.some(v => v > 0);
 
 new Chart(ctx, {
     type: 'line',
@@ -187,7 +225,11 @@ new Chart(ctx, {
     },
     options: {
         responsive: true,
-        plugins: { legend: { display: false } },
+        plugins: {
+            legend: { display: false },
+            // FIX: khi chưa có doanh thu ngày nào, vẫn vẽ trục 0-7 ngày thay vì canvas trắng
+            title: { display: !hasData, text: 'Chưa có doanh thu trong ' + labels.length + ' ngày qua', color: '#9ca3af' }
+        },
         scales: {
             y: { beginAtZero: true, ticks: { callback: v => v.toLocaleString('vi-VN') } }
         }

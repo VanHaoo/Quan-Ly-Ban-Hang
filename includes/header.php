@@ -7,7 +7,7 @@ if (!isset($page_title)) $page_title = 'Quan Ly Ban Hang';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= htmlspecialchars($page_title) ?> - Quan Ly Ban Hang</title>
+    <title><?= htmlspecialchars($page_title) ?> - Quản Lý Bán Hàng</title>
     <link rel="stylesheet" href="<?= url('assets/css/style.css') ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
@@ -23,11 +23,8 @@ if (!isset($page_title)) $page_title = 'Quan Ly Ban Hang';
                     <h2 class="page-title"><?= htmlspecialchars($page_title) ?></h2>
                 </div>
                 <div class="header-right">
-                    <div class="user-info">
-                        <span class="user-name"><?= htmlspecialchars($ho_ten ?? $_SESSION['ho_ten'] ?? 'User') ?></span>
-                        <span class="user-role"><?= htmlspecialchars($vai_tro ?? $_SESSION['vai_tro'] ?? '') ?></span>
-                    </div>
-                    <a href="<?= url('auth/logout.php') ?>" class="btn-logout" title="Dang xuat">
+                    <!-- Thông tin user đầy đủ đã có ở sidebar-footer, header chỉ cần icon đăng xuất -->
+                    <a href="<?= url('auth/logout.php') ?>" class="btn-logout" title="Đăng xuất">
                         <i class="fas fa-sign-out-alt"></i>
                     </a>
                 </div>
