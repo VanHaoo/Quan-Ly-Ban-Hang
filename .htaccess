@@ -1,0 +1,22 @@
+RewriteEngine On
+
+# Nếu file/thư mục tồn tại, không rewrite
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Cho phép truy cập trực tiếp các file tĩnh
+<FilesMatch "\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$">
+    RewriteEngine Off
+</FilesMatch>
+
+# Bảo vệ file nhạy cảm
+<Files "database.sql">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# PHP settings
+php_value upload_max_filesize 10M
+php_value post_max_size 10M
+php_value max_execution_time 300
