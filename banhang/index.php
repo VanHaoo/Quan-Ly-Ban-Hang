@@ -14,10 +14,6 @@ $stmt = $pdo->query("
 ");
 $products = $stmt->fetchAll();
 
-// Lấy danh sách khách hàng
-$stmt = $pdo->query("SELECT ma_khach_hang, ma_kh, ho_ten, diem_tich_luy FROM KHACHHANG WHERE trang_thai = 1 ORDER BY ho_ten");
-$customers = $stmt->fetchAll();
-
 // Lấy khuyến mãi đang hoạt động
 $stmt = $pdo->query("
     SELECT * FROM KHUYENMAI 
@@ -79,14 +75,16 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
 
         <div class="pos-payment">
-            <select id="customerSelect" onchange="updateCustomerPoints()">
-                <option value="">-- Khách lẻ --</option>
-                <?php foreach ($customers as $c): ?>
-                <option value="<?= $c['ma_khach_hang'] ?>" data-points="<?= $c['diem_tich_luy'] ?>">
-                    <?= htmlspecialchars($c['ho_ten']) ?> (<?= $c['ma_kh'] ?>) - <?= $c['diem_tich_luy'] ?> điểm
-                </option>
-                <?php endforeach; ?>
-            </select>
+            <div class="customer-picker">
+                <div class="customer-picker-selected" id="customerSelected" style="display:none">
+                    <span id="customerSelectedName"></span>
+                    <button type="button" onclick="clearCustomer()"><i class="fas fa-times"></i></button>
+                </div>
+                <input type="text" id="customerSearchInput" placeholder="🔍 Gõ tên hoặc SĐT khách hàng... (để trống = khách lẻ)"
+                    autocomplete="off" oninput="timKhachHang(this.value)">
+                <div class="customer-suggestions" id="customerSuggestions" style="display:none"></div>
+                <input type="hidden" id="customerIdHidden" value="">
+            </div>
 
             <select id="promotionSelect" onchange="calculateTotal()">
                 <option value="">-- Không áp dụng khuyến mãi --</option>
@@ -219,14 +217,88 @@ function calculateTotal() {
     document.getElementById('grandTotal').textContent = formatCurrency(grandTotal);
 }
 
-function updateCustomerPoints() {
-    const select = document.getElementById('customerSelect');
-    const option = select.options[select.selectedIndex];
-    const points = option.dataset.points || 0;
-    const input = document.getElementById('pointsInput');
-    input.max = points;
-    input.placeholder = 'Tối đa ' + points + ' điểm';
+let customerSearchTimeout = null;
+let khachHangDangChon = null; // { id, ten, diem }
+
+function timKhachHang(tuKhoa) {
+    document.getElementById('customerIdHidden').value = '';
+    khachHangDangChon = null;
+    calculateTotal();
+
+    clearTimeout(customerSearchTimeout);
+    const box = document.getElementById('customerSuggestions');
+
+    if (tuKhoa.trim().length < 2) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+        return;
+    }
+
+    // Debounce 300ms để không gọi API liên tục khi đang gõ
+    customerSearchTimeout = setTimeout(() => {
+        fetch('<?= url('banhang/api_khach_hang_search.php') ?>?q=' + encodeURIComponent(tuKhoa))
+            .then(r => r.json())
+            .then(result => {
+                if (!result.success || result.customers.length === 0) {
+                    box.innerHTML = '<div class="suggestion-empty">Không tìm thấy khách hàng</div>';
+                    box.style.display = 'block';
+                    return;
+                }
+                box.innerHTML = result.customers.map(c => `
+                    <div class="suggestion-item" onclick="chonKhachHang(${c.ma_khach_hang}, '${escJs(c.ho_ten)}', ${c.diem_tich_luy})">
+                        <strong>${escHtml(c.ho_ten)}</strong> (${escHtml(c.ma_kh)})
+                        <span class="muted">${escHtml(c.so_dien_thoai || '')} — ${c.diem_tich_luy} điểm</span>
+                    </div>
+                `).join('');
+                box.style.display = 'block';
+            })
+            .catch(() => {
+                box.innerHTML = '<div class="suggestion-empty">Lỗi tìm kiếm</div>';
+                box.style.display = 'block';
+            });
+    }, 300);
 }
+
+function chonKhachHang(id, ten, diem) {
+    khachHangDangChon = { id, ten, diem };
+    document.getElementById('customerIdHidden').value = id;
+    document.getElementById('customerSearchInput').style.display = 'none';
+    document.getElementById('customerSuggestions').style.display = 'none';
+    document.getElementById('customerSuggestions').innerHTML = '';
+
+    const selected = document.getElementById('customerSelected');
+    selected.style.display = 'flex';
+    document.getElementById('customerSelectedName').textContent = `${ten} — ${diem} điểm`;
+
+    const pointsInput = document.getElementById('pointsInput');
+    pointsInput.max = diem;
+    pointsInput.placeholder = 'Tối đa ' + diem + ' điểm';
+
+    calculateTotal();
+}
+
+function clearCustomer() {
+    khachHangDangChon = null;
+    document.getElementById('customerIdHidden').value = '';
+    document.getElementById('customerSearchInput').value = '';
+    document.getElementById('customerSearchInput').style.display = 'block';
+    document.getElementById('customerSelected').style.display = 'none';
+    document.getElementById('pointsInput').value = '';
+    document.getElementById('pointsInput').placeholder = 'Số điểm muốn sử dụng';
+    calculateTotal();
+}
+
+// Đóng dropdown gợi ý khi click ra ngoài
+document.addEventListener('click', function (e) {
+    const box = document.getElementById('customerSuggestions');
+    const input = document.getElementById('customerSearchInput');
+    if (box && input && !box.contains(e.target) && e.target !== input) {
+        box.style.display = 'none';
+    }
+});
+
+function escHtml(s) { return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function escJs(s) { return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
 
 function processPayment() {
     if (cart.length === 0) {
@@ -234,14 +306,13 @@ function processPayment() {
         return;
     }
 
-    const customerSelect = document.getElementById('customerSelect');
     const promoSelect = document.getElementById('promotionSelect');
     const paymentMethod = document.getElementById('paymentMethod').value;
     const pointsUsed = parseInt(document.getElementById('pointsInput').value) || 0;
 
     const data = {
         cart: cart,
-        customer_id: customerSelect.value || null,
+        customer_id: document.getElementById('customerIdHidden').value || null,
         promotion_id: promoSelect.value || null,
         payment_method: paymentMethod,
         points_used: pointsUsed
