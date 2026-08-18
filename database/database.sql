@@ -569,7 +569,7 @@ CREATE TRIGGER TRG_TONKHO_INSERT AFTER INSERT ON BIEN_THESANPHAM
 FOR EACH ROW
 BEGIN
     INSERT INTO TONKHO(ma_bien_the, so_luong, so_luong_toi_thieu)
-    VALUES (NEW.ma_bien_the, 0, NEW.ton_toi_thieu);
+    VALUES (NEW.ma_bien_the, NEW.ton_kho, NEW.ton_toi_thieu);
 END //
 
 CREATE TRIGGER TRG_LICHSUGIA_INSERT AFTER UPDATE ON SANPHAM

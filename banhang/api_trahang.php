@@ -73,7 +73,7 @@ if ($action === 'confirm') {
     try {
         $pdo->beginTransaction();
 
-        $stmt = $pdo->prepare("SELECT ma_hoa_don, ma_khach_hang, trang_thai FROM HOADON WHERE ma_hd = ?");
+        $stmt = $pdo->prepare("SELECT ma_hoa_don, ma_khach_hang, trang_thai FROM HOADON WHERE ma_hd = ? FOR UPDATE");
         $stmt->execute([$ma_hd]);
         $hoadon = $stmt->fetch();
         if (!$hoadon || $hoadon['trang_thai'] === 'HUY') {
@@ -91,7 +91,7 @@ if ($action === 'confirm') {
         $pdo->prepare("UPDATE TRAHANG SET ma_th = ? WHERE ma_tra_hang = ?")->execute([$ma_th, $ma_tra_hang]);
 
         // Chi tiết trả hàng - lấy đơn giá GỐC từ CHITIETHOADON, không tin giá client gửi lên
-        $stmt_gia = $pdo->prepare("SELECT don_gia FROM CHITIETHOADON WHERE ma_hoa_don = ? AND ma_bien_the = ?");
+        $stmt_gia = $pdo->prepare("SELECT ct.so_luong, ct.don_gia, COALESCE((SELECT SUM(cttr.so_luong) FROM CHITIETTRAHANG cttr JOIN TRAHANG th ON th.ma_tra_hang = cttr.ma_tra_hang WHERE th.ma_hoa_don = ct.ma_hoa_don AND cttr.ma_bien_the = ct.ma_bien_the AND th.trang_thai = 'HOANTAT'), 0) AS da_tra FROM CHITIETHOADON ct WHERE ct.ma_hoa_don = ? AND ct.ma_bien_the = ?");
         $stmt_ct = $pdo->prepare("
             INSERT INTO CHITIETTRAHANG (ma_tra_hang, ma_bien_the, so_luong, don_gia_hoan, thanh_tien)
             VALUES (:ma_th, :ma_bt, :sl, :dg, :tt)
@@ -104,6 +104,9 @@ if ($action === 'confirm') {
             $stmt_gia->execute([$hoadon['ma_hoa_don'], $ma_bt]);
             $row = $stmt_gia->fetch();
             if (!$row) throw new Exception('Sản phẩm (id ' . $ma_bt . ') không thuộc hóa đơn này');
+            if ($sl + (int)$row['da_tra'] > (int)$row['so_luong']) {
+                throw new Exception('Số lượng trả vượt quá số lượng đã mua');
+            }
 
             $stmt_ct->execute([
                 'ma_th' => $ma_tra_hang, 'ma_bt' => $ma_bt, 'sl' => $sl,
